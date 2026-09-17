@@ -2,6 +2,7 @@ GEM
   remote: https://rubygems.org/
   specs:
     asciidoctor (2.0.26)
+    logger (1.7.0)
     rouge (4.6.1)
 
 PLATFORMS
@@ -10,6 +11,7 @@ PLATFORMS
 
 DEPENDENCIES
   asciidoctor (~> 2.0)
+  logger
   rouge (~> 4.1)
 
 BUNDLED WITH
