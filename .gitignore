@@ -8,3 +8,7 @@ vendor/bundle/
 # Build output
 build/
 docs/
+
+# Bundler local install path
+vendor/
+.bundle/

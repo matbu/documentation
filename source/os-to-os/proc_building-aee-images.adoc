@@ -1,0 +1,163 @@
+:_mod-docs-content-type: PROCEDURE
+[id="proc_osts-building-aee"]
+= Building and using an automation execution environment
+
+[role="_abstract"]
+To run OpenStack to OpenStack migrations in a consistent and reproducible way, you can use an automation execution environment (AEE). An AEE is a container image that bundles Ansible Core, the OS Migrate collection (`os_migrate.os_migrate`), the OpenStack SDK, and the required Python and system dependencies. You can pull a pre-built image from Quay or build your own image from the files in the `aee/` directory of the collection.
+
+.Prerequisites
+
+* The `ansible-builder` tool is installed. For more information about installing `ansible-builder`, see the link:https://ansible.readthedocs.io/projects/builder/[Ansible Builder documentation].
+* A container runtime is installed, such as `podman` or `docker`.
+* Access to `quay.io` for the base image and to `galaxy.ansible.com` for Ansible collections.
+
+.Using pre-built AEE images
+
+Instead of building your own image, you can pull a published image from Quay. Pre-built AEE images are available for both OS Migrate collections:
+
+* OpenStack to OpenStack migration (`os_migrate.os_migrate`):
++
+[source,bash]
+----
+podman pull quay.io/os-migrate/os-migrate:stable
+----
+* VMware to OpenStack migration (`os_migrate.vmware_migration_kit`):
++
+[source,bash]
+----
+podman pull quay.io/os-migrate/vmware-migration-kit:stable
+----
+
+For more information, see the Quay repositories at link:https://quay.io/repository/os-migrate/os-migrate[quay.io/os-migrate/os-migrate] and link:https://quay.io/repository/os-migrate/vmware-migration-kit[quay.io/os-migrate/vmware-migration-kit].
+
+.Procedure
+
+To build your own AEE image for OpenStack to OpenStack migration:
+
+. Create the execution environment definition file `execution-environment.yml`:
++
+[source,yaml]
+----
+---
+version: 3
+images:
+  base_image:
+    name: quay.io/centos/centos:stream10-minimal
+options:
+  package_manager_path: /usr/bin/microdnf
+dependencies:
+  ansible_runner:
+    package_pip: ansible-runner
+  ansible_core:
+    package_pip: ansible-core
+  python: requirements.txt
+  system: bindep.txt
+  galaxy: requirements.yml
+  python_interpreter:
+    package_system: "python3"
+    python_path: "/usr/bin/python3"
+additional_build_files:
+  - src: ../os_migrate-os_migrate-1.0.5.tar.gz
+    dest: tmp/
+additional_build_steps:
+  prepend_base:
+    - "RUN mkdir -p /etc/sudoers.d"
+    - "RUN echo 'cloud-user ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/cloud-user"
+----
++
+The `additional_build_steps` section adds a passwordless sudo rule for the `cloud-user` account, which the migration playbooks use on the conversion host.
+
+. Create the Python dependencies file `requirements.txt`:
++
+[source,text]
+----
+openstacksdk==4.5.0
+PyYAML==6.0.2
+jmespath>=1.0.0
+----
+
+. Create the Ansible collections file `requirements.yml`:
++
+[source,yaml]
+----
+---
+collections:
+  - name: os_migrate.os_migrate
+    source: tmp/os_migrate-os_migrate-1.0.5.tar.gz
+    type: file
+----
++
+[NOTE]
+====
+This example installs the collection from a local archive that the `additional_build_files` section copies into the build context. Build the archive with `ansible-galaxy collection build` from the collection source. To install the collection from Ansible Galaxy instead, replace the entry with a plain collection name:
+
+[source,yaml]
+----
+---
+collections:
+  - name: os_migrate.os_migrate
+----
+====
+
+. Create the system package dependencies file `bindep.txt`:
++
+[source,text]
+----
+epel-release
+openssh-clients
+sshpass
+python3
+python3-pip
+python3-dnf
+python3-devel
+rsync
+gcc
+git-core
+rhel-system-roles
+----
+
+. Build the AEE image:
++
+[source,bash]
+----
+ansible-builder build -v3 --tag os-migrate
+----
++
+The `aee/` directory of the collection includes a `build.sh` helper script that runs this command and removes the generated build context:
++
+[source,bash]
+----
+#!/usr/bin/env bash
+tag_name=os-migrate
+ansible-builder build -v3 --tag $tag_name
+rm -fr "$(pwd)/context/"
+----
+
+. (Optional) Tag and push the image to a container registry:
++
+[source,bash]
+----
+podman tag os-migrate <registry>/<namespace>/os-migrate:stable
+podman push <registry>/<namespace>/os-migrate:stable
+----
+
+.Running playbooks with AEE
+
+To run migration playbooks inside the AEE container:
+
+[source,bash]
+----
+podman run --rm -it \
+  -v $(pwd):/runner:z \
+  -v ~/.config/openstack:/home/runner/.config/openstack:ro \
+  quay.io/os-migrate/os-migrate:stable \
+  ansible-playbook -i /runner/inventory \
+  -e @/runner/vars.yaml \
+  os_migrate.os_migrate.migrate
+----
+
+Common volume mounts for AEE usage:
+
+* `$(pwd):/runner:z`: Mount the working directory with SELinux context adjustment
+* `~/.config/openstack:/home/runner/.config/openstack:ro`: Mount OpenStack credentials (read-only)
+* `~/.ssh:/home/runner/.ssh:ro`: Mount SSH keys for conversion host access (read-only)
